@@ -13,7 +13,7 @@ There are three fundamental entries:
 ## Extension
 An extension encapsulates all relevant information for a specific vector extension.
 
-We decided to limit the extensions to their corresponding supersets, e.g., (SSE, SSE2, SSSE3, SSE4.1, SSE4.2) are all represented by the extension **sse**.
+We decided to limit the extensions to their corresponding supersets, e.g., (SSE, SSE2, SSSE3, SSE4.1, SSE4.2) are all represented by the extension `sse`.
 This reduces the overall number of specified extensions and improves the comprehensibility. 
 To include all relevant subsets of an extension, the corresponding lscpu entries has to be included in the extension description.
 
@@ -98,15 +98,14 @@ The specified data will be passed into the _JINJA2_ templates and can be accesse
 
 ## Primitive
 
----
 
-A primitive is the **_TVL_**-counterpart to an SIMD-intrinsic. Primitives are organized in [Primitive Classes](#primitive-class). 
+A primitive is the **_TVL_**-equivalent to an SIMD-intrinsic. Primitives are organized in [Primitive Classes](#primitive-class). 
 
 For every primitive class a single yaml file exists, containing all related primitives.
-Every primitive in **_TVL_** exists as a fully templated function (_Primitive Declaration_), which calls the a static member function of the associated _Primitive Definition_ struct.
-The introduced indirection allow partial specialization of primitivies.
+Every primitive in **_TVL_** exists as a fully templated function (_Primitive Declaration_), which calls the static member function of the associated _Primitive Definition_ struct.
+The introduced indirection allow partial specialization of primitivies (see [Example of a generated _TVL_-primitive add](#example-of-a-generated-tvl-primitive-add)).
 
-### Example of a generated _TVL_-primitive add()
+### Example of a generated TVL-primitive add()
 <table>
 <tr>
 <td align="center">

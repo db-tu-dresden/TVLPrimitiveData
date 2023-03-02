@@ -513,7 +513,8 @@ testing:
       return allOk;
 ...
 ---
-primitive_name: "shift_left_vector"
+primitive_name: "shift_left"
+functor_name: "shift_left_vector"
 brief_description: "Shifts data to left by n bits (shifting in 0)."
 parameters:
   - ctype: "const typename Vec::register_type"
@@ -559,10 +560,8 @@ definitions:
     lscpu_flags: [ 'neon' ]
     implementation: "return vshlq_{{ intrin_tp_full[ctype] }}(data, shift);"
   #SCALAR
-  - target_extension: "scalar"
-    ctype: ["uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"]
-    lscpu_flags: []
-    implementation: "return (shift >= sizeof(typename Vec::register_type) * 8) ? 0 : data << shift;"
+  # this implementation conflicts with the functor from the non vector version of shift_left even if no implementation 
+  # is provided here, because the convenience function calling the 'apply' method is generated regardless
 testing:
   - requires: ["storeu", "loadu"]
     includes: ["<cstddef>", "<type_traits>"]
@@ -584,7 +583,7 @@ testing:
           }
           auto vec1 = loadu<Vec>(&test_data[element_count + i]);
           auto vec2 = loadu<Vec>(&test_data[i]);
-          storeu<Vec>(result, shift_left_vector<Vec>(vec1, vec2));
+          storeu<Vec>(result, shift_left<Vec>(vec1, vec2));
           test_helper.synchronize();
           allOk &= test_helper.validate();
       }

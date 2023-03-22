@@ -470,3 +470,34 @@ definitions:
       x <<= shift;
       return *reinterpret_cast<double*>(&x);
 ...
+---
+primitive_name: "clz"
+brief_description: "Counts leading zeros."
+parameters:
+  - ctype: "const typename Vec::register_type"
+    name: "data"
+    description: "Data."
+returns:
+  ctype: "typename Vec::register_type"
+  description: "Vector containing the leading zero count."
+definitions:
+  - target_extension: "fpga"
+    includes: ["<sycl/ext/intel/ac_types/ac_int.hpp>", "<limits>", "<type_traits>"]
+    ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "float", "uint64_t", "int64_t", "double"]
+    lscpu_flags: ["avx512f"]
+    implementation: |
+      using base_t = typename Vec::base_type;
+      using register_t = typename Vec::register_type;
+      register_t result{};
+      using bitInt = ac_int<std::numeric_limits<base_t>::digits, std::is_signed_v<base_t>>;
+      #pragma unroll
+      for(size_t idx = 0; idx < Vec::vector_element_count(); idx++) {
+         bitInt val = data[idx];
+         if constexpr(std::is_signed_v<base_t>) {
+            result[idx] = val[std::numeric_limits<base_t>::digits-1] ? 0 : val.leading_sign()+1;
+         } else {
+            result[idx] = val.leading_sign();
+         }
+      }
+      return result;
+...

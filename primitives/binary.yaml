@@ -478,26 +478,48 @@ parameters:
     name: "data"
     description: "Data."
 returns:
-  ctype: "typename Vec::register_type"
-  description: "Vector containing the leading zero count."
+  ctype: "typename Vec::offset_base_register_type"
+  description: "Vector containing the leading zero count which is represented in unsigned ints."
 definitions:
   - target_extension: "fpga"
-    includes: ["<sycl/ext/intel/ac_types/ac_int.hpp>", "<limits>", "<type_traits>"]
-    ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "float", "uint64_t", "int64_t", "double"]
-    lscpu_flags: ["avx512f"]
+    includes: ["<sycl/ext/intel/ac_types/ac_int.hpp>", "<climits>"]
+    ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t"]
+    lscpu_flags: ["fpga"]
+    vector_length_agnostic: True
     implementation: |
+      // as the current version of oneAPI does not properly implement ac_int::leading_sign() we "reimplemented" it
+      // /glob/development-tools/versions/oneapi/2023.0.1/oneapi/compiler/2023.0.0/linux/lib/oclfpga/include/sycl/ext/intel/ac_types/ac_int.hpp
       using base_t = typename Vec::base_type;
-      using register_t = typename Vec::register_type;
-      register_t result{};
-      using bitInt = ac_int<std::numeric_limits<base_t>::digits, std::is_signed_v<base_t>>;
+      typename Vec::offset_base_register_type result{};
+      using bitInt = ac_int<(sizeof(base_t)*CHAR_BIT), std::is_signed_v<base_t>>;
       #pragma unroll
       for(size_t idx = 0; idx < Vec::vector_element_count(); idx++) {
-         bitInt val = data[idx];
-         if constexpr(std::is_signed_v<base_t>) {
-            result[idx] = val[std::numeric_limits<base_t>::digits-1] ? 0 : val.leading_sign()+1;
-         } else {
-            result[idx] = val.leading_sign();
-         }
+         bitInt val = bitInt(data[idx]);
+         int k;
+         #pragma unroll
+         for(k = (sizeof(base_t)*CHAR_BIT)-1; k >= 0 && val[k] == 0; k--) {}
+         result[idx] = (sizeof(base_t)*CHAR_BIT) + ~k;
+      }
+      return result;
+  - target_extension: "fpga"
+    includes: ["<sycl/ext/intel/ac_types/ac_int.hpp>", "<climits>"]
+    ctype: ["float", "double"]
+    lscpu_flags: ["fpga"]
+    vector_length_agnostic: True
+    implementation: |
+      // as the current version of oneAPI does not properly implement ac_int::leading_sign() we "reimplemented" it
+      // /glob/development-tools/versions/oneapi/2023.0.1/oneapi/compiler/2023.0.0/linux/lib/oclfpga/include/sycl/ext/intel/ac_types/ac_int.hpp
+      using base_t = typename Vec::base_type;
+      using ret_t = typename Vec::offset_base_type;
+      typename Vec::offset_base_register_type result{};
+      using bitInt = ac_int<(sizeof(base_t)*CHAR_BIT), std::is_signed_v<base_t>>;
+      #pragma unroll
+      for(size_t idx = 0; idx < Vec::vector_element_count(); idx++) {
+         bitInt val = bitInt(*reinterpret_cast<ret_t const *>(&(data[idx])));
+         int k;
+         #pragma unroll
+         for(k = (sizeof(base_t)*CHAR_BIT)-1; k >= 0 && val[k] == 0; k--) {}
+         result[idx] = (sizeof(base_t)*CHAR_BIT) + ~k;
       }
       return result;
 ...

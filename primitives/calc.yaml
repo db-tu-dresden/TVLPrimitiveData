@@ -997,7 +997,7 @@ testing:
         return test_helper.validate();
    - test_name: "with_sequence"
      requires: ["sequence", "loadu", "storeu"]
-     includes: ["<cstddef>", "<iostream>"]
+     includes: ["<cstddef>"]
      implementation: |
       using T = typename Vec::base_type;
       std::size_t element_count = 1024;
@@ -1009,16 +1009,12 @@ testing:
       auto test_result_ptr = test_helper.result_target();
       for(std::size_t i = 0; i < element_count; i += Vec::vector_element_count()){
         std::size_t result = 0;
-        std::cout << "Data: [";
         for(size_t j=i; j < i + Vec::vector_element_count(); j++){
-          std::cout << (std::size_t) reference_data_ptr[j] << ", ";
           result |= reference_data_ptr[j];
         }
-        std::cout << "]\t";
         auto vec = loadu<Vec>(&test_data_ptr[i]);
         auto vec_result = hor<Vec>(vec);
         std::size_t tester_idx = 0;
-        std::cout << "Ref,Test: " << result << ", " << (std::size_t) hor<Vec>(vec) << "\n";
         for(size_t j=i; j < i + Vec::vector_element_count(); j++){
           reference_result_ptr[tester_idx] = result;
           test_result_ptr[tester_idx++] = vec_result;
@@ -1030,7 +1026,59 @@ testing:
 definitions:
 #INTEL - AVX512 - FLOAT und DOUBLE
    - target_extension: "avx512"
-     ctype: ["int8_t", "uint8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t"]
+     ctype: ["int8_t", "uint8_t"]
+     lscpu_flags: ["avx512"]
+     implementation: |
+      Vec::register_type temp = vec;
+      // Permute and OR the two 256-bit lanes
+      Vec::register_type permuted = _mm512_permutexvar_epi64(_mm512_set_epi64(7, 3, 6, 2, 5, 1, 4, 0), temp);
+      temp = _mm512_or_si512(temp, permuted);
+      // Shuffle and OR within 128-bit lanes
+      Vec::register_type shuffled = _mm512_shuffle_i32x4(temp, temp, _MM_SHUFFLE(1, 0, 3, 2));
+      temp = _mm512_or_si512(temp, shuffled);
+      // Shuffle and OR within 64-bit lanes
+      Vec::register_type shuf = _mm512_set_epi{{intrin_tp[ctype][1]}}(
+          56, 48, 40, 32, 24, 16, 8, 0,
+          56, 48, 40, 32, 24, 16, 8, 0,
+          56, 48, 40, 32, 24, 16, 8, 0,
+          56, 48, 40, 32, 24, 16, 8, 0
+      );
+      Vec::register_type shuf_result = _mm512_shuffle_epi8(temp, shuf);
+      Vec::register_type or_result = _mm512_or_si512(temp, shuf_result);
+      // Extract result
+      return ({{ctype}})_mm512_extract_epi{{intrin_tp[ctype][1]}}(or_result, 0);
+   - target_extension: "avx512"
+     ctype: ["uint16_t", "int16_t"]
+     lscpu_flags: [ 'avx512' ]
+     implementation: |
+      Vec::register_type temp = vec;
+      // Permute and OR the two 256-bit lanes
+      Vec::register_type permuted = _mm512_permutexvar_epi64(_mm512_set_epi64(7, 3, 6, 2, 5, 1, 4, 0), temp);
+      temp = _mm512_or_si512(temp, permuted);
+      // Shuffle and OR within 128-bit lanes
+      Vec::register_type shuffled = _mm512_shuffle_i32x4(temp, temp, _MM_SHUFFLE(1, 0, 3, 2));
+      temp = _mm512_or_si512(temp, shuffled);
+      // Shuffle and OR within 64-bit lanes
+      Vec::register_type shuf = _mm512_set_epi{{intrin_tp[ctype][1]}}(
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0,
+          24, 16, 8, 0
+      );
+      Vec::register_type shuf_result = _mm512_shuffle_epi8(temp, shuf);
+      Vec::register_type or_result = _mm512_or_si512(temp, shuf_result);
+      // Extract result
+      return ({{ctype}})_mm512_extract_epi{{intrin_tp[ctype][1]}}(or_result, 0);
+   - target_extension: "avx512"
+     ctype: ["uint32_t", "int32_t"]
+     lscpu_flags: [ 'avx512dq' ]
+     implementation: return ({{ctype}})(_mm512_reduce_or_epi32(vec));
+   - target_extension: "avx512"
+     ctype: ["int64_t", "uint64_t"]
      lscpu_flags: [ 'avx512dq' ]
      implementation: return ({{ctype}})(_mm512_reduce_or_epi64(vec));
 #INTEL - AVX2 - FLOAT und DOUBLE
@@ -1045,7 +1093,7 @@ definitions:
       or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 4));
       or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 2));
       or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 1));
-      return static_cast<{{ctype}}>(_mm_extract_epi8(or_128, 0));
+      return static_cast<{{ctype}}>(_mm_extract_epi{{intrin_tp[ctype][1]}}(or_128, 0));
    - target_extension: "avx2"
      ctype: ["int16_t", "uint16_t"]
      lscpu_flags: [ 'avx2' ]
@@ -1056,7 +1104,7 @@ definitions:
       or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
       or_128 = _mm_or_si128(or_128, _mm_shufflelo_epi16(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
       or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 2));
-      return static_cast<{{ctype}}>(_mm_extract_epi16(or_128, 0));
+      return static_cast<{{ctype}}>(_mm_extract_epi{{intrin_tp[ctype][1]}}(or_128, 0));
    - target_extension: "avx2"
      ctype: ["int32_t", "uint32_t"]
      lscpu_flags: [ 'avx2' ]
@@ -1066,7 +1114,7 @@ definitions:
       // Combine the 4 32-bit lanes into one using pshufd and por
       or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
       or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(2, 3, 0, 1)));
-      return static_cast<{{ctype}}>(_mm_extract_epi32(or_128, 0));
+      return static_cast<{{ctype}}>(_mm_extract_epi{{intrin_tp[ctype][1]}}(or_128, 0));
    - target_extension: "avx2"
      ctype: ["int64_t", "uint64_t"]
      lscpu_flags: [ 'avx2' ]
@@ -1074,7 +1122,7 @@ definitions:
       __m128i or_128 = _mm_or_si128(_mm256_extracti128_si256(vec, 0), _mm256_extracti128_si256(vec, 1));
       // Combine the 2 64-bit lanes into one using por
       or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 8));
-      return static_cast<{{ctype}}>(_mm_extract_epi64(or_128, 0));
+      return static_cast<{{ctype}}>(_mm_extract_epi{{intrin_tp[ctype][1]}}(or_128, 0));
 #INTEL - SSE - FLOAT und DOUBLE
    - target_extension: "sse"
      ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]

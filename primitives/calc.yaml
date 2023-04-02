@@ -870,15 +870,104 @@ definitions:
      implementation: return vec_a / vec_b;
 #INTEL - FPGA
 ---
+primitive_name: "unequal_zero"
+brief_description: "Checks if the vector register contains one value unequal zero."
+parameters:
+   - ctype: "const typename Vec::register_type"
+     name: "vec"
+     description: "Operating Vector"
+returns:
+   ctype: "bool"
+   description: "Result indicating if the vector register contains one value unequal to zero."
+testing:
+   - test_name: "with_only_zero"
+     requires: ["set1", "loadu", "storeu"]
+     includes: ["<cstddef>"]
+     implementation: |
+        using T = typename Vec::base_type;
+        testing::test_memory_helper_t<Vec> test_helper{1, false};
+        auto reference_result_ptr = test_helper.result_ref();
+        auto test_result_ptr = test_helper.result_target();
+        auto vec = set1<Vec>(0);
+        *reference_result_ptr = 0;
+        *test_result_ptr = unequal_zero<Vec>(vec);
+        test_helper.synchronize();
+        return test_helper.validate();
+   - test_name: "with_only_one"
+     requires: ["set1", "loadu", "storeu"]
+     includes: ["<cstddef>"]
+     implementation: |
+        using T = typename Vec::base_type;
+        testing::test_memory_helper_t<Vec> test_helper{1, false};
+        auto reference_result_ptr = test_helper.result_ref();
+        auto test_result_ptr = test_helper.result_target();
+        auto vec = set1<Vec>(1);
+        *reference_result_ptr = 1;
+        *test_result_ptr = unequal_zero<Vec>(vec);
+        test_helper.synchronize();
+        return test_helper.validate();
+   - test_name: "with_sequence"
+     requires: ["sequence", "loadu", "storeu"]
+     includes: ["<cstddef>"]
+     implementation: |
+        using T = typename Vec::base_type;
+        testing::test_memory_helper_t<Vec> test_helper{1, false};
+        auto reference_result_ptr = test_helper.result_ref();
+        auto test_result_ptr = test_helper.result_target();
+        auto vec = sequence<Vec>();
+        *reference_result_ptr = (bool) (Vec::vector_element_count() - 1);
+        *test_result_ptr = unequal_zero<Vec>(vec);
+        test_helper.synchronize();
+        return test_helper.validate();
+definitions:
+#INTEL - AVX512
+   - target_extension: "avx512"
+     ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t"]
+     lscpu_flags: ['avx512f', 'avx512bw']
+     implementation: return (_mm512_cmpneq_epi{{intrin_tp[ctype][1]}}_mask(vec, _mm512_setzero_si512()) != 0);
+   - target_extension: "avx512"
+     ctype: ["int32_t", "uint32_t", "int64_t", "uint64_t"]
+     lscpu_flags: ['avx512f']
+     implementation: return (_mm512_cmpneq_epi{{intrin_tp[ctype][1]}}_mask(vec, _mm512_setzero_si512()) != 0);
+   - target_extension: "avx512"
+     ctype: ["float", "double"]
+     lscpu_flags: ['avx512f', 'avx512bw']
+     implementation: return (_mm512_cmp_{{intrin_tp_full[ctype]}}_mask(vec, _mm512_setzero_{{intrin_tp_full[ctype]}}(), _CMP_NEQ_OQ) != 0);
+#INTEL - AVX2
+   - target_extension: "avx2"
+     ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "int32_t", "uint32_t", "int64_t", "uint64_t"]
+     lscpu_flags: ['avx2']
+     implementation: return (_mm256_testz_si256(vec,vec) == 0);
+   - target_extension: "avx2"
+     ctype: ["float", "double"]
+     lscpu_flags: ['avx2']
+     implementation: return (_mm256_movemask_{{intrin_tp_full[ctype]}}(_mm256_cmp_{{intrin_tp_full[ctype]}}(vec, _mm256_setzero_{{intrin_tp_full[ctype]}}(), _CMP_NEQ_UQ)) != 0);
+#INTEL - SSE
+   - target_extension: "sse"
+     ctype: [ "float", "double" ]
+     lscpu_flags: [ 'sse2' ]
+     implementation: return (_mm_movemask_{{intrin_tp_full[ctype]}}(_mm_cmpneq_{{intrin_tp_full[ctype]}}(vec, _mm_setzero_{{intrin_tp_full[ctype]}}())) != 0);
+   - target_extension: "sse"
+     ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint8_t", "int8_t", "uint64_t", "int64_t"]
+     lscpu_flags: ['sse4_1']
+     implementation: return (_mm_testz_si128(vec, vec) == 0);
+#SCALAR
+   - target_extension: "scalar"
+     ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t", "float", "double" ]
+     lscpu_flags: [ ]
+     implementation: "return (bool)vec;"
+#ARM - NEON
+#INTEL - FPGA
+---
 primitive_name: "hor"
-brief_description: "Operate horizontal or on vector register"
+brief_description: "Operates horizontal OR on vector register"
 parameters:
    - ctype: "const typename Vec::register_type"
      name: "vec"
      description: "Operating Vector"
 returns:
    ctype: "typename Vec::base_type"
-   description: "Value containing result of the horizontal or"
+   description: "Result of the horizontal OR"
 testing:
    - test_name: "with_only_zero"
      requires: ["set1", "loadu", "storeu"]
@@ -908,50 +997,97 @@ testing:
         return test_helper.validate();
    - test_name: "with_sequence"
      requires: ["sequence", "loadu", "storeu"]
-     includes: ["<cstddef>"]
+     includes: ["<cstddef>", "<iostream>"]
      implementation: |
-        using T = typename Vec::base_type;
-        testing::test_memory_helper_t<Vec> test_helper{1, false};
-        auto reference_result_ptr = test_helper.result_ref();
-        auto test_result_ptr = test_helper.result_target();
-        auto vec = sequence<Vec>();
-        *reference_result_ptr = (bool) (Vec::vector_element_count() - 1);
-        *test_result_ptr = hor<Vec>(vec);
+      using T = typename Vec::base_type;
+      std::size_t element_count = 1024;
+      testing::test_memory_helper_t<Vec> test_helper{element_count, Vec::vector_element_count(), false};
+      bool allOk = true;
+      auto reference_data_ptr = test_helper.data_ref();
+      auto reference_result_ptr = test_helper.result_ref();
+      auto test_data_ptr = test_helper.data_target();
+      auto test_result_ptr = test_helper.result_target();
+      for(std::size_t i = 0; i < element_count; i += Vec::vector_element_count()){
+        std::size_t result = 0;
+        std::cout << "Data: [";
+        for(size_t j=i; j < i + Vec::vector_element_count(); j++){
+          std::cout << (std::size_t) reference_data_ptr[j] << ", ";
+          result |= reference_data_ptr[j];
+        }
+        std::cout << "]\t";
+        auto vec = loadu<Vec>(&test_data_ptr[i]);
+        auto vec_result = hor<Vec>(vec);
+        std::size_t tester_idx = 0;
+        std::cout << "Ref,Test: " << result << ", " << (std::size_t) hor<Vec>(vec) << "\n";
+        for(size_t j=i; j < i + Vec::vector_element_count(); j++){
+          reference_result_ptr[tester_idx] = result;
+          test_result_ptr[tester_idx++] = vec_result;
+        }
         test_helper.synchronize();
-        return test_helper.validate();
+        allOk &= test_helper.validate();
+      }
+      return allOk;
 definitions:
-#INTEL - AVX512
+#INTEL - AVX512 - FLOAT und DOUBLE
    - target_extension: "avx512"
-     ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "int32_t", "uint32_t", "int64_t", "uint64_t"]
-     lscpu_flags: ['avx512f', 'avx512bw']
-     implementation: return (_mm512_cmpneq_epi{{intrin_tp[ctype][1]}}_mask(vec, _mm512_setzero_si512()) != 0);
-   - target_extension: "avx512"
-     ctype: ["float", "double"]
-     lscpu_flags: ['avx512f', 'avx512bw']
-     implementation: return (_mm512_cmp_{{intrin_tp_full[ctype]}}_mask(vec, _mm512_setzero_{{intrin_tp_full[ctype]}}(), _CMP_NEQ_OQ) != 0);
-#INTEL - AVX2
+     ctype: ["int8_t", "uint8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t"]
+     lscpu_flags: [ 'avx512dq' ]
+     implementation: return ({{ctype}})(_mm512_reduce_or_epi64(vec));
+#INTEL - AVX2 - FLOAT und DOUBLE
    - target_extension: "avx2"
-     ctype: ["uint8_t", "int8_t", "uint16_t", "int16_t", "int32_t", "uint32_t", "int64_t", "uint64_t"]
-     lscpu_flags: ['avx2']
-     implementation: return (_mm256_testz_si256(vec,vec) == 0);
+     ctype: ["int8_t", "uint8_t"]
+     lscpu_flags: [ 'avx2' ]
+     implementation: |
+      __m128i or_128 = _mm_or_si128(_mm256_extracti128_si256(vec, 0), _mm256_extracti128_si256(vec, 1));
+      // Combine the 16 8-bit lanes into one using pshufb and por
+      const __m128i shuffle_mask = _mm_set_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+      or_128 = _mm_or_si128(or_128, _mm_shuffle_epi8(or_128, shuffle_mask));
+      or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 4));
+      or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 2));
+      or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 1));
+      return static_cast<{{ctype}}>(_mm_extract_epi8(or_128, 0));
    - target_extension: "avx2"
-     ctype: ["float", "double"]
-     lscpu_flags: ['avx2']
-     implementation: return (_mm256_movemask_{{intrin_tp_full[ctype]}}(_mm256_cmp_{{intrin_tp_full[ctype]}}(vec, _mm256_setzero_{{intrin_tp_full[ctype]}}(), _CMP_NEQ_UQ)) != 0);
-#INTEL - SSE
+     ctype: ["int16_t", "uint16_t"]
+     lscpu_flags: [ 'avx2' ]
+     implementation: |
+      __m128i or_128 = _mm_or_si128(_mm256_extracti128_si256(vec, 0), _mm256_extracti128_si256(vec, 1));
+      // Combine the 8 16-bit lanes into one using pshufb and por
+      const __m128i shuffle_mask = _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, 7, 6, 5, 4, 3, 2, 1, 0);
+      or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
+      or_128 = _mm_or_si128(or_128, _mm_shufflelo_epi16(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
+      or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 2));
+      return static_cast<{{ctype}}>(_mm_extract_epi16(or_128, 0));
+   - target_extension: "avx2"
+     ctype: ["int32_t", "uint32_t"]
+     lscpu_flags: [ 'avx2' ]
+     implementation: |
+      // Combine the two 128-bit lanes into one
+      __m128i or_128 = _mm_or_si128(_mm256_extracti128_si256(vec, 0), _mm256_extracti128_si256(vec, 1));
+      // Combine the 4 32-bit lanes into one using pshufd and por
+      or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(1, 0, 3, 2)));
+      or_128 = _mm_or_si128(or_128, _mm_shuffle_epi32(or_128, _MM_SHUFFLE(2, 3, 0, 1)));
+      return static_cast<{{ctype}}>(_mm_extract_epi32(or_128, 0));
+   - target_extension: "avx2"
+     ctype: ["int64_t", "uint64_t"]
+     lscpu_flags: [ 'avx2' ]
+     implementation: |
+      __m128i or_128 = _mm_or_si128(_mm256_extracti128_si256(vec, 0), _mm256_extracti128_si256(vec, 1));
+      // Combine the 2 64-bit lanes into one using por
+      or_128 = _mm_or_si128(or_128, _mm_srli_si128(or_128, 8));
+      return static_cast<{{ctype}}>(_mm_extract_epi64(or_128, 0));
+#INTEL - SSE - FLOAT und DOUBLE
    - target_extension: "sse"
-     ctype: [ "float", "double" ]
+     ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]
      lscpu_flags: [ 'sse2' ]
-     implementation: return (_mm_cmp_{{intrin_tp_full[ctype]}}_mask(vec, _mm_setzero_{{intrin_tp_full[ctype]}}(), _CMP_NEQ_OQ) != 0);
-   - target_extension: "sse"
-     ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint8_t", "int8_t", "uint64_t", "int64_t"]
-     lscpu_flags: ['sse4_1']
-     implementation: return (_mm_testz_si128(vec, vec) == 0);
-#SCALAR
+     implementation: |
+        Vec::register_type temp = _mm_or_si128(vec, _mm_srli_si128(vec, sizeof({{ctype}})*8));
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})*4));
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})*2));
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})));
+        return _mm_extract_epi{{intrin_tp[ctype][1]}}(temp, 0);
+#SCALAR - FLOAT und DOUBLE
    - target_extension: "scalar"
-     ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t", "float", "double" ]
+     ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"]
      lscpu_flags: [ ]
-     implementation: "return (bool)vec;"
-#ARM - NEON
-#INTEL - FPGA
+     implementation: "return vec;"
 ...

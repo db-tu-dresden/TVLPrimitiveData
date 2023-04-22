@@ -1084,11 +1084,17 @@ definitions:
      lscpu_flags: [ 'sse2' ]
      implementation: |
         // Reduce Lanes dependend on datatype 
-        Vec::register_type temp = _mm_or_si128(vec, _mm_srli_si128(vec, sizeof({{ctype}})*8));
-        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})*4));
-        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})*2));
-        temp = _mm_or_si128(temp, _mm_srli_si128(temp, sizeof({{ctype}})));
-        // Extract least significant value from the resulting temp
+        Vec::register_type temp = _mm_or_si128(vec, _mm_srli_si128(vec, 8));
+        {% if ctype != "int64_t" and ctype != "uint64_t" %}
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, 4));
+        {% endif %}
+        {% if ctype == "int16_t" or ctype == "uint16_t" %}
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, 2));
+        {% endif %}
+        {% if ctype == "int8_t" or ctype == "uint8_t" %}
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, 2));
+        temp = _mm_or_si128(temp, _mm_srli_si128(temp, 1));
+        {% endif %}
         return _mm_extract_epi{{intrin_tp[ctype][1]}}(temp, 0);
 #SCALAR
    - target_extension: "scalar"
@@ -1212,16 +1218,13 @@ definitions:
      ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]
      lscpu_flags: [ 'avx2' ]
      implementation: |
-      //Vec::register_type all_zero = _mm256_setzero_si256();
-      //Vec::register_type all_ones = _mm256_cmpeq_epi32(all_zero, all_zero);
       Vec::register_type all_ones = _mm256_set1_epi32(-1);
       return _mm256_xor_si256(vec, all_ones);
    - target_extension: "avx2"
      ctype: ["float", "double"]
      lscpu_flags: [ 'avx2' ]
      implementation: |
-      __m256i all_zero = _mm256_setzero_si256();
-      __m256i all_ones = _mm256_cmpeq_epi32(all_zero, all_zero);
+      __m256i all_ones = _mm256_set1_epi32(-1);
       __m256i as_int = _mm256_cast{{intrin_tp_full[ctype]}}_si256(vec);
       return _mm256_castsi256_{{intrin_tp_full[ctype]}}(_mm256_xor_si256(as_int, all_ones));
 #INTEL - SSE
@@ -1229,20 +1232,40 @@ definitions:
      ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]
      lscpu_flags: [ 'sse2' ]
      implementation: |
-      Vec::register_type all_zero = _mm_setzero_si128();
-      Vec::register_type all_ones = _mm_cmpeq_epi32(all_zero, all_zero);
+      Vec::register_type all_ones = _mm_set1_epi32(-1);
       return _mm_xor_si128(vec, all_ones);
    - target_extension: "sse"
      ctype: ["float", "double"]
      lscpu_flags: [ 'sse2' ]
      implementation: |
-      __m128i all_zero = _mm_setzero_si128();
-      __m128i all_ones = _mm_cmpeq_epi32(all_zero, all_zero);
+      __m128i all_ones = _mm_set1_epi32(-1);
       __m128i as_int = _mm_cast{{intrin_tp_full[ctype]}}_si128(vec);
       return _mm_castsi128_{{intrin_tp_full[ctype]}}(_mm_xor_si128(as_int, all_ones));
-#SCALAR -> TODO: FLOAT UND DOUBLE
+#SCALAR
    - target_extension: "scalar"
      ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"]
      lscpu_flags: [ ]
      implementation: "return ~vec;"
+   - target_extension: "scalar"
+     ctype: [ "float" ]
+     lscpu_flags: [ ]
+     implementation: |
+      union {
+        float f_val;
+        int32_t i_val;
+      } u;
+      u.f_val = vec;
+      u.i_val = ~u.i_val;
+      return u.f_val;
+   - target_extension: "scalar"
+     ctype: [ "double" ]
+     lscpu_flags: [ ]
+     implementation: |
+      union {
+        double d_val;
+        int64_t i_val;
+      } u;
+      u.d_val = vec;
+      u.i_val = ~u.i_val;
+      return u.d_val;
 ...

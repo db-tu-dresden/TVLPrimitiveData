@@ -997,7 +997,7 @@ testing:
         return test_helper.validate();
    - test_name: "with_rand_values"
      requires: ["loadu", "storeu"]
-     includes: ["<cstddef>", "<iostream>"]
+     includes: ["<cstddef>"]
      implementation: |
       using T = typename Vec::base_type;
       std::size_t element_count = 1024;
@@ -1009,27 +1009,23 @@ testing:
       auto test_result_ptr = test_helper.result_target();
       for(std::size_t i = 0; i < element_count; i += Vec::vector_element_count()){
         auto vec = loadu<Vec>(&test_data_ptr[i]);
-        std::size_t result = 0;
         if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){
-          for(size_t j=i; j < i + Vec::vector_element_count(); j++){
-            union {
+          typename std::conditional<std::is_same_v<T, float>, int32_t, 
+          typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type result = 0;
+          union {
               T val;
               typename std::conditional<std::is_same_v<T, float>, int32_t, 
               typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
             } u;
+          for(size_t j=i; j < i + Vec::vector_element_count(); j++){
             u.val = reference_data_ptr[j];
             result |= u.i_val;
           }
-          union {
-            T val;
-            typename std::conditional<std::is_same_v<T, float>, int32_t, 
-            typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
-          } v;
-          v.val = hor<Vec>(vec);
-          std::cout << "[Ref, SIMD]: [" << result << "," << v.i_val<<"]\n";
-          allOk &= (result == v.i_val);
+          u.val = hor<Vec>(vec);
+          allOk &= (result == u.i_val);
         }
         else{
+          std::size_t result = 0;
           for(size_t j=i; j < i + Vec::vector_element_count(); j++){
           result |= reference_data_ptr[j];
           }
@@ -1080,6 +1076,22 @@ definitions:
      ctype: ["uint32_t", "int32_t", "int64_t", "uint64_t"]
      lscpu_flags: [ 'avx512dq' ]
      implementation: return _mm512_reduce_or_epi{{intrin_tp[ctype][1]}}(vec);
+   - target_extension: "avx512"
+     ctype: ["float", "double"]
+     lscpu_flags: [ 'avx512dq' ]
+     implementation: |
+      {% if ctype == "float" %}
+      union{
+        float val;
+        int32_t i_val;
+      }u;
+      {% else %}
+      union{
+        double val;
+        int64_t i_val;
+      }u;
+      u.i_val = _mm512_reduce_or_epi32(_mm512_castps_si512(vec));
+      return u.val;
 #INTEL - AVX2
    - target_extension: "avx2"
      ctype: ["int8_t", "uint8_t", "uint16_t", "int16_t", "uint32_t", "int32_t", "int64_t", "uint64_t"]
@@ -1107,8 +1119,17 @@ definitions:
       __m128i temp = _mm_or_si128(_mm256_extracti128_si256(as_int, 0), _mm256_extracti128_si256(as_int, 1));
       temp = _mm_or_si128(temp, _mm_srli_si128(temp, 8));
       temp = _mm_or_si128(temp, _mm_srli_si128(temp, 4));
-      __m256i as_float = _mm256_castsi128_si256(temp);
-      return _mm_extract_epi32(temp, 0);
+      __m128 as_float = _mm_castsi128_ps(temp);
+      return _mm_cvtss_f32(as_float);
+   - target_extension: "avx2"
+     ctype: ["double"]
+     lscpu_flags: [ 'avx2', 'sse2' ]
+     implementation: |
+      __m256i as_int = _mm256_castpd_si256(vec);  //convert to int
+      __m128i temp = _mm_or_si128(_mm256_extracti128_si256(as_int, 0), _mm256_extracti128_si256(as_int, 1));
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 8));
+      __m128d as_double = _mm_castsi128_pd(temp);
+      return _mm_cvtsd_f64(as_double);
 #INTEL - SSE
    - target_extension: "sse"
      ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]
@@ -1127,9 +1148,26 @@ definitions:
         temp = _mm_or_si128(temp, _mm_srli_si128(temp, 1));
         {% endif %}
         return _mm_extract_epi{{intrin_tp[ctype][1]}}(temp, 0);
+   - target_extension: "sse"
+     ctype: ["float"]
+     lscpu_flags: ['sse2']
+     implementation: |
+      __m128i temp = _mm_castps_si128(vec);  //convert to int
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 8));
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 4));
+      __m128 as_float = _mm_castsi128_ps(temp);
+      return _mm_cvtss_f32(as_float);      
+   - target_extension: "sse"
+     ctype: ["double"]
+     lscpu_flags: [ 'sse2' ]
+     implementation: |
+      __m128i temp = _mm_castpd_si128(vec);  //convert to int
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 8));
+      __m128d as_double = _mm_castsi128_pd(temp);
+      return _mm_cvtsd_f64(as_double);
 #SCALAR
    - target_extension: "scalar"
-     ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t"]
+     ctype: [ "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t", "float", "double"]
      lscpu_flags: [ ]
      implementation: "return vec;"
 #ARM - NEON
@@ -1309,7 +1347,7 @@ definitions:
      lscpu_flags: [ ]
      implementation: "return ~vec;"
    - target_extension: "scalar"
-     ctype: [ "float" ]
+     ctype: [ "float", "double" ]
      lscpu_flags: [ ]
      implementation: |
       {% if ctype == "float" %}

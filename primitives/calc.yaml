@@ -997,7 +997,7 @@ testing:
         return test_helper.validate();
    - test_name: "with_rand_values"
      requires: ["loadu", "storeu"]
-     includes: ["<cstddef>"]
+     includes: ["<cstddef>", "<iostream>"]
      implementation: |
       using T = typename Vec::base_type;
       std::size_t element_count = 1024;
@@ -1008,16 +1008,37 @@ testing:
       auto test_data_ptr = test_helper.data_target();
       auto test_result_ptr = test_helper.result_target();
       for(std::size_t i = 0; i < element_count; i += Vec::vector_element_count()){
-        std::size_t result = 0;
-        for(size_t j=i; j < i + Vec::vector_element_count(); j++){
-          result |= reference_data_ptr[j];
-        }
         auto vec = loadu<Vec>(&test_data_ptr[i]);
-        auto vec_result = hor<Vec>(vec);
-        * reference_result_ptr = result;
-        * test_result_ptr = vec_result;
-        test_helper.synchronize();
-        allOk &= test_helper.validate();
+        std::size_t result = 0;
+        if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){
+          for(size_t j=i; j < i + Vec::vector_element_count(); j++){
+            union {
+              T val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+            } u;
+            u.val = reference_data_ptr[j];
+            result |= u.i_val;
+          }
+          union {
+            T val;
+            typename std::conditional<std::is_same_v<T, float>, int32_t, 
+            typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+          } v;
+          v.val = hor<Vec>(vec);
+          std::cout << "[Ref, SIMD]: [" << result << "," << v.i_val<<"]\n";
+          allOk &= (result == v.i_val);
+        }
+        else{
+          for(size_t j=i; j < i + Vec::vector_element_count(); j++){
+          result |= reference_data_ptr[j];
+          }
+          auto vec_result = hor<Vec>(vec);
+          * reference_result_ptr = result;
+          * test_result_ptr = vec_result;
+          test_helper.synchronize();
+          allOk &= test_helper.validate();
+        }
       }
       return allOk;
 definitions:
@@ -1078,6 +1099,16 @@ definitions:
       temp = _mm_or_si128(temp, _mm_srli_si128(temp, 1));
       {% endif %}
       return _mm_extract_epi{{intrin_tp[ctype][1]}}(temp, 0);
+   - target_extension: "avx2"
+     ctype: ["float"]
+     lscpu_flags: [ 'avx2', 'sse2' ]
+     implementation: |
+      __m256i as_int = _mm256_castps_si256(vec);  //convert to int
+      __m128i temp = _mm_or_si128(_mm256_extracti128_si256(as_int, 0), _mm256_extracti128_si256(as_int, 1));
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 8));
+      temp = _mm_or_si128(temp, _mm_srli_si128(temp, 4));
+      __m256i as_float = _mm256_castsi128_si256(temp);
+      return _mm_extract_epi32(temp, 0);
 #INTEL - SSE
    - target_extension: "sse"
      ctype: ["uint16_t", "int16_t", "uint32_t", "int32_t", "uint64_t", "int64_t", "uint8_t", "int8_t"]
@@ -1116,88 +1147,119 @@ returns:
 testing:
    - test_name: "with_only_zero"
      requires: ["set1", "loadu", "storeu"]
-     includes: ["<cstddef>", "<iostream>"]
+     includes: ["<cstddef>","<algorithm>", "<limits>"]
      implementation: |
         using T = typename Vec::base_type;
         testing::test_memory_helper_t<Vec> test_helper{Vec::vector_element_count(), false};
         auto reference_result_ptr = test_helper.result_ref();
         auto test_result_ptr = test_helper.result_target();
         auto vec = set1<Vec>(0);
-        if constexpr (std::is_same_v<T, float>){
-          float data[Vec::vector_element_count()];
+        if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){
+          T data[Vec::vector_element_count()];
           storeu<Vec>(data, vec);
-          for(int i = 0; i < Vec::vector_element_count(); i ++){  
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          for(int i = 0; i < Vec::vector_element_count(); i ++){
             union {
-              float f_val;
-              int32_t i_val;
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
             } u;
-            u.f_val = data[i];
-            u.i_val = ~u.i_val;
-            reference_result_ptr[i] = u.f_val;
-          }
-        }
-        else if constexpr (std::is_same_v<T, double>){
-          double data[Vec::vector_element_count()];
-          storeu<Vec>(data, vec);
-          for(int i = 0; i < Vec::vector_element_count(); i ++){  
+            u.f_val = test_result_ptr[i];
             union {
-              double f_val;
-              int64_t i_val;
-            } u;
-            u.f_val = data[i];
-            u.i_val = ~u.i_val;
-            reference_result_ptr[i] = u.f_val;
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+            } v;
+            v.f_val = data[i];
+            v.i_val = ~v.i_val;
+            return (u.i_val == v.i_val);
           }
         }
         else{
           storeu<Vec>(reference_result_ptr, ~vec);
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          test_helper.synchronize();
+          return test_helper.validate();
         }
-        storeu<Vec>(test_result_ptr, inv<Vec>(vec));
-        std::cout << "Ref, Test: [" << (std::size_t)reference_result_ptr[0] << ", " << (std::size_t)test_result_ptr[0] << "]\t is equal: " << (reference_result_ptr[0] == test_result_ptr[0]) << "\n";
-        test_helper.synchronize();
-        return test_helper.validate();
    - test_name: "with_only_ones"
      requires: ["set1", "loadu", "storeu"]
-     includes: ["<cstddef>", "<algorithm>", "<limits>", "<iostream>"]
+     includes: ["<cstddef>", "<algorithm>", "<limits>"]
      implementation: |
         using T = typename Vec::base_type;
         testing::test_memory_helper_t<Vec> test_helper{Vec::vector_element_count(), false};
         auto reference_result_ptr = test_helper.result_ref();
         auto test_result_ptr = test_helper.result_target();
         auto vec = set1<Vec>(~0);
-        if constexpr (std::is_same_v<T, float>){
-          float data[Vec::vector_element_count()];
+        if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){
+          T data[Vec::vector_element_count()];
           storeu<Vec>(data, vec);
-          for(int i = 0; i < Vec::vector_element_count(); i ++){  
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          for(int i = 0; i < Vec::vector_element_count(); i ++){
             union {
-              float f_val;
-              int32_t i_val;
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
             } u;
-            u.f_val = data[i];
-            u.i_val = ~u.i_val;
-            reference_result_ptr[i] = u.f_val;
-          }
-        }
-        else if constexpr (std::is_same_v<T, double>){
-          double data[Vec::vector_element_count()];
-          storeu<Vec>(data, vec);
-          for(int i = 0; i < Vec::vector_element_count(); i ++){  
+            u.f_val = test_result_ptr[i];
             union {
-              double f_val;
-              int64_t i_val;
-            } u;
-            u.f_val = data[i];
-            u.i_val = ~u.i_val;
-            reference_result_ptr[i] = u.f_val;
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+            } v;
+            v.f_val = data[i];
+            v.i_val = ~v.i_val;
+            return (u.i_val == v.i_val);
           }
         }
         else{
           storeu<Vec>(reference_result_ptr, ~vec);
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          test_helper.synchronize();
+          return test_helper.validate();
         }
-        storeu<Vec>(test_result_ptr, inv<Vec>(vec));
-        std::cout << "Ref, Test: [" << (std::size_t)reference_result_ptr[0] << ", " << (std::size_t)test_result_ptr[0] << "]\t is equal: " << (reference_result_ptr[0] == test_result_ptr[0]) << "\n";
-        test_helper.synchronize();
-        return test_helper.validate();
+   - test_name: "with_rand_values"
+     requires: ["loadu", "storeu"]
+     includes: ["<cstddef>"]
+     implementation: |
+      using T = typename Vec::base_type;
+      std::size_t element_count = 1024;
+      testing::test_memory_helper_t<Vec> test_helper{element_count, Vec::vector_element_count(), false};
+      bool allOk = true;
+      auto reference_data_ptr = test_helper.data_ref();
+      auto reference_result_ptr = test_helper.result_ref();
+      auto test_data_ptr = test_helper.data_target();
+      auto test_result_ptr = test_helper.result_target();
+      for(std::size_t i = 0; i < element_count; i += Vec::vector_element_count()){
+        auto vec = loadu<Vec>(&test_data_ptr[i]);
+        if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){
+          T data[Vec::vector_element_count()];
+          storeu<Vec>(data, vec);
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          for(int i = 0; i < Vec::vector_element_count(); i ++){
+            union {
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+            } u;
+            u.f_val = test_result_ptr[i];
+            union {
+              T f_val;
+              typename std::conditional<std::is_same_v<T, float>, int32_t, 
+              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
+            } v;
+            v.f_val = data[i];
+            v.i_val = ~v.i_val;
+            allOk &= (u.i_val == v.i_val);
+          }
+        }
+        else{
+          storeu<Vec>(reference_result_ptr, ~vec);
+          storeu<Vec>(test_result_ptr, inv<Vec>(vec));
+          test_helper.synchronize();
+          allOk &= test_helper.validate();
+        }
+      }
+      return allOk;
 definitions:
 #INTEL - AVX512
    - target_extension: "avx512"
@@ -1250,22 +1312,18 @@ definitions:
      ctype: [ "float" ]
      lscpu_flags: [ ]
      implementation: |
+      {% if ctype == "float" %}
       union {
-        float f_val;
+        float val;
         int32_t i_val;
       } u;
-      u.f_val = vec;
-      u.i_val = ~u.i_val;
-      return u.f_val;
-   - target_extension: "scalar"
-     ctype: [ "double" ]
-     lscpu_flags: [ ]
-     implementation: |
+      {% else %}
       union {
-        double d_val;
+        double val;
         int64_t i_val;
       } u;
-      u.d_val = vec;
+      {% endif %}
+      u.val = vec;
       u.i_val = ~u.i_val;
-      return u.d_val;
+      return u.val;
 ...

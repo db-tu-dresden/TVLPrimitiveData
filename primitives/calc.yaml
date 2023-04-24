@@ -1189,20 +1189,17 @@ testing:
           storeu<Vec>(data, vec);
           storeu<Vec>(test_result_ptr, inv<Vec>(vec));
           for(int i = 0; i < Vec::vector_element_count(); i ++){
+            typename std::conditional<std::is_same_v<T, float>, int32_t, 
+            typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type test_i_val = 0;
             union {
-              T f_val;
+              T val;
               typename std::conditional<std::is_same_v<T, float>, int32_t, 
               typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
             } u;
-            u.f_val = test_result_ptr[i];
-            union {
-              T f_val;
-              typename std::conditional<std::is_same_v<T, float>, int32_t, 
-              typename std::conditional<std::is_same_v<T, double>, int64_t, void>::type>::type i_val;
-            } v;
-            v.f_val = data[i];
-            v.i_val = ~v.i_val;
-            allOk &= (u.i_val == v.i_val);
+            u.val = test_result_ptr[i];
+            test_i_val = u.i_val;
+            u.val = data[i];
+            allOk &= (~u.i_val == test_i_val);
           }
         }
         else{

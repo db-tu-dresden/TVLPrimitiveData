@@ -343,7 +343,7 @@ definitions:
         }
         return result;
 ---
-primitive_name: "unequal_zero" #TODO: Move to compare
+primitive_name: "unequal_zero" 
 brief_description: "Checks if the vector register contains at least one value unequal zero."
 parameters:
    - ctype: "const typename Vec::register_type"

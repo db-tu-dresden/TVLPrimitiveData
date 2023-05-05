@@ -1405,12 +1405,137 @@ testing:
       }
       return allOk;
 definitions:
+# INTEL - AVX512
+   - target_extension: "avx512"
+     ctype: ["int16_t"]
+     lscpu_flags: [ 'avx512f']
+     implementation: |
+      Vec::register_type temp = vec;
+
+      __m512i sign_bit = _mm512_set1_epi16(0x8000);
+      __mmask16 is_negative = _mm512_cmpgt_epi16_mask(_mm512_setzero_si512(), temp);
+      temp = _mm512_xor_si512(temp, _mm512_maskz_mov_epi16(is_negative, sign_bit));
+
+      // Zero-extend the 16-bit values to 32-bit values
+      __m256i lower = _mm512_castsi512_si256(temp);
+      __m256i upper = _mm512_extracti64x4_epi64(temp, 1);
+
+      WATCH THE EPI BZW EPU
+      __m512i extended_lower = _mm512_cvtepi16_epi32(lower);
+      __m512i extended_upper = _mm512_cvtepi16_epi32(upper);
+
+      // Count the leading zeroes for each 32-bit value
+      __m512i lzcnt_lower = _mm512_lzcnt_epi32(extended_lower);
+      __m512i lzcnt_upper = _mm512_lzcnt_epi32(extended_upper);
+
+      // Subtract 16 from each count to account for the zero-extended bits
+      __m512i correction = _mm512_set1_epi32(17);
+      __m512i corrected_lower = _mm512_sub_epi32(lzcnt_lower, correction);
+      __m512i corrected_upper = _mm512_sub_epi32(lzcnt_upper, correction);
+
+      // Convert 32-bit values to 16-bit values 
+      lower = _mm512_cvtepi32_epi16(corrected_lower);
+      upper = _mm512_cvtepi32_epi16(corrected_upper);
+
+      // Combine the two 256-bit registers into a single 512-bit register.
+      __m512i result = _mm512_inserti64x4(_mm512_castsi256_si512(lower), upper, 1);
+
+      return result;
+   - target_extension: "avx512"
+     ctype: [ "uint8_t" ]
+     lscpu_flags: [ 'avx512f']
+     implementation: |
+      // Zero-extend the 8-bit values to 32-bit values
+      __m128i quarter0 = _mm512_extracti32x4_epi32(vec, 0);
+      __m128i quarter1 = _mm512_extracti32x4_epi32(vec, 1);
+      __m128i quarter2 = _mm512_extracti32x4_epi32(vec, 2);
+      __m128i quarter3 = _mm512_extracti32x4_epi32(vec, 3);
+
+      __m512i extended_quarter0 = _mm512_cvtepu8_epi32(quarter0);
+      __m512i extended_quarter1 = _mm512_cvtepu8_epi32(quarter1);
+      __m512i extended_quarter2 = _mm512_cvtepu8_epi32(quarter2);
+      __m512i extended_quarter3 = _mm512_cvtepu8_epi32(quarter3);
+
+      // Count the leading zeroes for each 32-bit value
+      __m512i lzcnt_quarter0 = _mm512_lzcnt_epi32(extended_quarter0);
+      __m512i lzcnt_quarter1 = _mm512_lzcnt_epi32(extended_quarter1);
+      __m512i lzcnt_quarter2 = _mm512_lzcnt_epi32(extended_quarter2);
+      __m512i lzcnt_quarter3 = _mm512_lzcnt_epi32(extended_quarter3);
+
+      // Subtract 24 from each count to account for the zero-extended bits
+      __m512i correction = _mm512_set1_epi32(24);
+      __m512i corrected_quarter0 = _mm512_sub_epi32(lzcnt_quarter0, correction);
+      __m512i corrected_quarter1 = _mm512_sub_epi32(lzcnt_quarter1, correction);
+      __m512i corrected_quarter2 = _mm512_sub_epi32(lzcnt_quarter2, correction);
+      __m512i corrected_quarter3 = _mm512_sub_epi32(lzcnt_quarter3, correction);
+
+      // Pack 32-bit values into 8-bit values
+      quarter0 = _mm512_cvtepi32_epi8(corrected_quarter0);
+      quarter1 = _mm512_cvtepi32_epi8(corrected_quarter1);
+      quarter2 = _mm512_cvtepi32_epi8(corrected_quarter2);
+      quarter3 = _mm512_cvtepi32_epi8(corrected_quarter3);
+
+      // Combine the four 128-bit registers into a single 512-bit register.
+      __m512i result = _mm512_inserti32x4(_mm512_castsi128_si512(quarter0), quarter1, 1);
+      result = _mm512_inserti32x4(result, quarter2, 2);
+      result = _mm512_inserti32x4(result, quarter3, 3);
+
+      return result;
+   - target_extension: "avx512"
+     ctype: ["uint16_t"]
+     lscpu_flags: [ 'avx512f']
+     implementation: |
+      // Zero-extend the 16-bit values to 32-bit values
+      __m256i lower = _mm512_castsi512_si256(vec);
+      __m256i upper = _mm512_extracti64x4_epi64(vec, 1);
+
+      __m512i extended_lower = _mm512_cvtepu16_epi32(lower);
+      __m512i extended_upper = _mm512_cvtepu16_epi32(upper);
+
+      // Count the leading zeroes for each 32-bit value
+      __m512i lzcnt_lower = _mm512_lzcnt_epi32(extended_lower);
+      __m512i lzcnt_upper = _mm512_lzcnt_epi32(extended_upper);
+
+      // Subtract 16 from each count to account for the zero-extended bits
+      __m512i correction = _mm512_set1_epi32(16);
+      __m512i corrected_lower = _mm512_sub_epi32(lzcnt_lower, correction);
+      __m512i corrected_upper = _mm512_sub_epi32(lzcnt_upper, correction);
+
+      // Convert 32-bit values to 16-bit values 
+      lower = _mm512_cvtepi32_epi16(corrected_lower);
+      upper = _mm512_cvtepi32_epi16(corrected_upper);
+
+      // Combine the two 256-bit registers into a single 512-bit register.
+      __m512i result = _mm512_inserti64x4(_mm512_castsi256_si512(lower), upper, 1);
+
+      return result;
+   - target_extension: "avx512"
+     ctype: ["uint32_t", "uint64_t"]
+     lscpu_flags: [ 'avx512f' ]
+     implementation: return _mm512_lzcnt_epi{{intrin_tp[ctype][1]}}(vec);
+   - target_extension: "avx512"
+     ctype: ["int32_t", "int64_t"]
+     lscpu_flags: [ 'avx512f' ]
+     implementation: |
+      Vec::register_type temp = vec;
+
+      {% if ctype == "int32_t" %}
+      __m512i sign_bit = _mm512_set1_epi{{intrin_tp[ctype][1]}}(0x80000000);
+      {% else %}
+      __m512i sign_bit = _mm512_set1_epi{{intrin_tp[ctype][1]}}(0x8000000000000000);
+      {% endif %}
+
+      // If the input value is negative, we need to invert the bits
+      __mmask{{intrin_tp[ctype][1]}} is_negative = _mm512_cmpgt_epi{{intrin_tp[ctype][1]}}_mask(_mm512_setzero_si512(), temp);
+      temp = _mm512_xor_si512(temp, _mm512_maskz_mov_epi{{intrin_tp[ctype][1]}}(is_negative, sign_bit));
+      
+      return _mm512_sub_epi{{intrin_tp[ctype][1]}}(_mm512_lzcnt_epi{{intrin_tp[ctype][1]}}(temp),_mm512_set1_epi{{intrin_tp[ctype][1]}}(1));
 # INTEL - AVX2
    - target_extension: "avx2"
      ctype: ["int8_t", "int16_t", "int32_t"]
      lscpu_flags: [ 'avx2' ]
      implementation: |
-      __m256i temp = vec;
+      Vec::register_type temp = vec;
       int msb = {{intrin_tp[ctype][1]}} - 1;  // Minus 1 beacause of the Sign bit
       __m256i result = _mm256_set1_epi{{intrin_tp[ctype][1]}}(msb); 
       

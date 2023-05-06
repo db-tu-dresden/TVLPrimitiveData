@@ -1304,10 +1304,14 @@ testing:
           int a;
           for(int val = 0; val < Vec::vector_element_count(); val++){
             int leading_zeroes = 0;
-            const int num_bits = std::numeric_limits<T>::digits;
+            const int num_bits = std::numeric_limits<T>::digits + std::is_signed<T>::value;
             T mask = T(1) << (num_bits - 1);
+
+            // If the input value is negative, find the absolute value
+            T abs = (data[val] < 0) ? -data[val] : data[val];
+
             for(int i = 0; i < num_bits; i++){
-              if(data[val] & mask){
+              if(abs & mask){
                 break;
               }
               leading_zeroes ++;
@@ -1320,10 +1324,6 @@ testing:
           auto result_vec = count_leading_zeroes<Vec>(vec);
           
           storeu<Vec>(result_data, result_vec);
-          std::cout << "---------------\nExpectedValue: "<< a << "\nResultValues: [";
-          for(int i = 0; i < Vec::vector_element_count(); i ++) std::cout << (int)result_data[i] << ", ";
-          std::cout << "]\n---------------\n";
-
           storeu<Vec>(test_result_ptr, result_vec);
           test_helper.synchronize();
           return test_helper.validate();
@@ -1341,15 +1341,28 @@ testing:
           return true;
         }
         else{
-          auto vec_result = set1<Vec>(0);
-          storeu<Vec>(reference_result_ptr, vec_result);
-          vec_result = count_leading_zeroes<Vec>(vec);
-          storeu<Vec>(test_result_ptr, vec_result);
-          std::cout << "---------------\nExpectedValue: 0\nResultValues: [";
-          for(int i = 0; i < Vec::vector_element_count(); i ++){
-            std::cout << (int)test_result_ptr[i] << ", ";
+          T data[Vec::vector_element_count()];
+          storeu<Vec>(data, vec);
+          int a;
+          for(int val = 0; val < Vec::vector_element_count(); val++){
+            int leading_zeroes = 0;
+            const int num_bits = std::numeric_limits<T>::digits + std::is_signed<T>::value;
+            T mask = T(1) << (num_bits - 1);
+
+            // If the input value is negative, find the absolute value
+            T abs = (data[val] < 0) ? -data[val] : data[val];
+
+            for(int i = 0; i < num_bits; i++){
+              if(abs & mask){
+                break;
+              }
+              leading_zeroes ++;
+              mask >>= 1;
+            }
+            reference_result_ptr[val] = leading_zeroes;
+            a = leading_zeroes;
           }
-          std::cout << "]\n---------------\n";
+          storeu<Vec>(test_result_ptr, count_leading_zeroes<Vec>(vec));
           test_helper.synchronize();
           return test_helper.validate();
         }
@@ -1365,91 +1378,51 @@ testing:
       auto reference_result_ptr = test_helper.result_ref();
       auto test_data_ptr = test_helper.data_target();
       auto test_result_ptr = test_helper.result_target();
-      for(std::size_t i = 0; i < (element_count - Vec::vector_element_count()); i += Vec::vector_element_count()){
+      for(std::size_t i = 0; i < (element_count - Vec::vector_element_count()); i += Vec::vector_element_count()){  
         auto vec = loadu<Vec>(&test_data_ptr[i]);
         if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>){return true;}
         else{
-          std::cout << "\n---------------\n";
-          std::cout << "RawValues: [";
-          for(std::size_t j = i; j < Vec::vector_element_count(); j ++){
-            std::cout << (int)test_data_ptr[j] << ", ";
-          }
-          std::cout << "]\nExpected: [";
-          for(std::size_t j = i; j < Vec::vector_element_count(); j++){
+          std::size_t tester_idx = 0;
+          for(std::size_t j = i; j < i + Vec::vector_element_count(); j++){
             int leading_zeroes = 0;
-            const int num_bits = std::numeric_limits<T>::digits;
+            const int num_bits = std::numeric_limits<T>::digits + std::is_signed<T>::value;
             T mask = T(1) << (num_bits - 1);
+            // If the input value is negative, find the absolute value
+            T abs = (reference_data_ptr[j] < 0) ? -reference_data_ptr[j] : reference_data_ptr[j];
             for(std::size_t k = 0; k < num_bits; k++){
-              if(reference_data_ptr[j] & mask){
+              if(abs & mask){
                 break;
               }
               leading_zeroes ++;
               mask >>= 1;
             }
-            reference_result_ptr[j] = leading_zeroes;
-            std::cout << (int)leading_zeroes << ", ";
+            reference_result_ptr[tester_idx++] = leading_zeroes;
           }
-          std::cout << "]\n";
           storeu<Vec>(test_result_ptr, count_leading_zeroes<Vec>(vec));
-
-          std::cout << "ResultValues: [";
-          for(std::size_t j = i; j < Vec::vector_element_count(); j ++){
-            std::cout << (int)test_result_ptr[j] << ", ";
-          }
-          std::cout << "]\n---------------\n";
-
           test_helper.synchronize();
           allOk &= test_helper.validate();
-          return allOk;
         }
       }
       return allOk;
 definitions:
 # INTEL - AVX512
    - target_extension: "avx512"
-     ctype: ["int16_t"]
+     ctype: [ "uint8_t", "int8_t" ]
      lscpu_flags: [ 'avx512f']
      implementation: |
       Vec::register_type temp = vec;
+      {% if ctype == "int8_t" %}
+      __m512i sign_bit = _mm512_set1_epi{{intrin_tp[ctype][1]}}(0x80);
+      __mmask64 is_negative = _mm512_cmpgt_epi{{intrin_tp[ctype][1]}}_mask(_mm512_setzero_si512(), temp);
+      temp = _mm512_xor_si512(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, -1));
+      temp = _mm512_add_epi{{intrin_tp[ctype][1]}}(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, 1));
+      {% endif %}
 
-      __m512i sign_bit = _mm512_set1_epi16(0x8000);
-      __mmask16 is_negative = _mm512_cmpgt_epi16_mask(_mm512_setzero_si512(), temp);
-      temp = _mm512_xor_si512(temp, _mm512_maskz_mov_epi16(is_negative, sign_bit));
-
-      // Zero-extend the 16-bit values to 32-bit values
-      __m256i lower = _mm512_castsi512_si256(temp);
-      __m256i upper = _mm512_extracti64x4_epi64(temp, 1);
-
-      WATCH THE EPI BZW EPU
-      __m512i extended_lower = _mm512_cvtepi16_epi32(lower);
-      __m512i extended_upper = _mm512_cvtepi16_epi32(upper);
-
-      // Count the leading zeroes for each 32-bit value
-      __m512i lzcnt_lower = _mm512_lzcnt_epi32(extended_lower);
-      __m512i lzcnt_upper = _mm512_lzcnt_epi32(extended_upper);
-
-      // Subtract 16 from each count to account for the zero-extended bits
-      __m512i correction = _mm512_set1_epi32(17);
-      __m512i corrected_lower = _mm512_sub_epi32(lzcnt_lower, correction);
-      __m512i corrected_upper = _mm512_sub_epi32(lzcnt_upper, correction);
-
-      // Convert 32-bit values to 16-bit values 
-      lower = _mm512_cvtepi32_epi16(corrected_lower);
-      upper = _mm512_cvtepi32_epi16(corrected_upper);
-
-      // Combine the two 256-bit registers into a single 512-bit register.
-      __m512i result = _mm512_inserti64x4(_mm512_castsi256_si512(lower), upper, 1);
-
-      return result;
-   - target_extension: "avx512"
-     ctype: [ "uint8_t" ]
-     lscpu_flags: [ 'avx512f']
-     implementation: |
       // Zero-extend the 8-bit values to 32-bit values
-      __m128i quarter0 = _mm512_extracti32x4_epi32(vec, 0);
-      __m128i quarter1 = _mm512_extracti32x4_epi32(vec, 1);
-      __m128i quarter2 = _mm512_extracti32x4_epi32(vec, 2);
-      __m128i quarter3 = _mm512_extracti32x4_epi32(vec, 3);
+      __m128i quarter0 = _mm512_extracti32x4_epi32(temp, 0);
+      __m128i quarter1 = _mm512_extracti32x4_epi32(temp, 1);
+      __m128i quarter2 = _mm512_extracti32x4_epi32(temp, 2);
+      __m128i quarter3 = _mm512_extracti32x4_epi32(temp, 3);
 
       __m512i extended_quarter0 = _mm512_cvtepu8_epi32(quarter0);
       __m512i extended_quarter1 = _mm512_cvtepu8_epi32(quarter1);
@@ -1482,12 +1455,20 @@ definitions:
 
       return result;
    - target_extension: "avx512"
-     ctype: ["uint16_t"]
+     ctype: ["uint16_t", "int16_t"]
      lscpu_flags: [ 'avx512f']
      implementation: |
+      Vec::register_type temp = vec;
+      {% if ctype == "int16_t" %}
+      __m512i sign_bit = _mm512_set1_epi{{intrin_tp[ctype][1]}}(0x8000);
+      __mmask32 is_negative = _mm512_cmpgt_epi{{intrin_tp[ctype][1]}}_mask(_mm512_setzero_si512(), temp);
+      temp = _mm512_xor_si512(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, -1));
+      temp = _mm512_add_epi{{intrin_tp[ctype][1]}}(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, 1));
+      {% endif %}
+
       // Zero-extend the 16-bit values to 32-bit values
-      __m256i lower = _mm512_castsi512_si256(vec);
-      __m256i upper = _mm512_extracti64x4_epi64(vec, 1);
+      __m256i lower = _mm512_castsi512_si256(temp);
+      __m256i upper = _mm512_extracti64x4_epi64(temp, 1);
 
       __m512i extended_lower = _mm512_cvtepu16_epi32(lower);
       __m512i extended_upper = _mm512_cvtepu16_epi32(upper);
@@ -1527,34 +1508,33 @@ definitions:
 
       // If the input value is negative, we need to invert the bits
       __mmask{{intrin_tp[ctype][1]}} is_negative = _mm512_cmpgt_epi{{intrin_tp[ctype][1]}}_mask(_mm512_setzero_si512(), temp);
-      temp = _mm512_xor_si512(temp, _mm512_maskz_mov_epi{{intrin_tp[ctype][1]}}(is_negative, sign_bit));
+      temp = _mm512_xor_si512(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, -1));
+      temp = _mm512_add_epi{{intrin_tp[ctype][1]}}(temp, _mm512_maskz_set1_epi{{intrin_tp[ctype][1]}}(is_negative, 1));
+
       
-      return _mm512_sub_epi{{intrin_tp[ctype][1]}}(_mm512_lzcnt_epi{{intrin_tp[ctype][1]}}(temp),_mm512_set1_epi{{intrin_tp[ctype][1]}}(1));
+      return _mm512_lzcnt_epi{{intrin_tp[ctype][1]}}(temp);
 # INTEL - AVX2
    - target_extension: "avx2"
      ctype: ["int8_t", "int16_t", "int32_t"]
      lscpu_flags: [ 'avx2' ]
      implementation: |
       Vec::register_type temp = vec;
-      int msb = {{intrin_tp[ctype][1]}} - 1;  // Minus 1 beacause of the Sign bit
+      int msb = {{intrin_tp[ctype][1]}};
       __m256i result = _mm256_set1_epi{{intrin_tp[ctype][1]}}(msb); 
       
-      __m256i current_bit;
-      __m256i sign_bit;
+      
       {% if ctype == "int16_t" %}
-      current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x4000); // Start with the second highest bit (ignoring sign bit)
-      sign_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x8000);
+      __m256i current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x8000); // Also sign_bit
       {% elif ctype == "int32_t" %}
-      current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x40000000); // Start with the second highest bit (ignoring sign bit)
-      sign_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x80000000);
+      __m256i current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x80000000); // Also sign_bit
       {% else %}
-      current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x40); // Start with the second highest bit (ignoring sign bit)
-      sign_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x80);
+      __m256i current_bit = _mm256_set1_epi{{intrin_tp[ctype][1]}}(0x80); // Also sign_bit
       {% endif %}
 
       // If the input value is negative, we need to invert the bits
       __m256i is_negative = _mm256_cmpgt_epi{{intrin_tp[ctype][1]}}(_mm256_setzero_si256(), temp);
-      temp = _mm256_xor_si256(temp, _mm256_and_si256(sign_bit, is_negative));
+      temp = _mm256_xor_si256(temp, is_negative);
+      temp = _mm256_add_epi{{intrin_tp[ctype][1]}}(temp, _mm256_and_si256(is_negative, _mm256_set1_epi{{intrin_tp[ctype][1]}}(1)));
 
       for (int i = msb-1; i >= 0; --i) {
         // Test the current bit of each value
@@ -1582,23 +1562,24 @@ definitions:
      lscpu_flags: [ 'avx2' ]
      implementation: |
       Vec::register_type temp = vec;
-      __m256i result = _mm256_set1_epi64x(63); // Set initial result to 63, indicating all bits are zero
-      __m256i current_bit = _mm256_set1_epi64x(0x4000000000000000); // Start with the second highest bit (ignoring sign bit)
-      __m256i sign_bit = _mm256_set1_epi64x(0x8000000000000000);
+      __m256i result = _mm256_set1_epi64x(64); // Set initial result to 63, indicating all bits are zero
+      __m256i current_bit = _mm256_set1_epi64x(0x8000000000000000); // Also sign_bit
 
       // If the input value is negative, we need to invert the bits
       __m256i is_negative = _mm256_cmpgt_epi64(_mm256_setzero_si256(), temp);
-      temp = _mm256_xor_si256(temp, _mm256_and_si256(sign_bit, is_negative));
+      temp = _mm256_xor_si256(temp, is_negative);
+      temp = _mm256_add_epi{{intrin_tp[ctype][1]}}(temp, _mm256_and_si256(is_negative, _mm256_set1_epi{{intrin_tp[ctype][1]}}x(1)));
 
-      for (int i = 62; i >= 0; --i) {
+
+      for (int i = 63; i >= 0; --i) {
           // Test the current bit of each int64_t
           __m256i bit_set = _mm256_and_si256(temp, current_bit);
 
-          // Create a mask with the number of leading zeros (62 - i) where the current bit is set
-          __m256i leading_zeros_update = _mm256_set1_epi64x(62 - i);
+          // Create a mask with the number of leading zeros (63 - i) where the current bit is set
+          __m256i leading_zeros_update = _mm256_set1_epi64x(63 - i);
           __m256i index_mask = _mm256_cmpeq_epi64(bit_set, current_bit);
 
-          // Update result with the masked leading zeros values only if they haven't been set before (greater than 62 - i)
+          // Update result with the masked leading zeros values only if they haven't been set before (greater than 63 - i)
           __m256i not_set_yet = _mm256_cmpgt_epi64(result, leading_zeros_update);
           index_mask = _mm256_and_si256(index_mask, not_set_yet);
           result = _mm256_blendv_epi8(result, leading_zeros_update, index_mask);
@@ -1674,25 +1655,20 @@ definitions:
      lscpu_flags: [ 'sse2', 'sse4_1']
      implementation: |
       Vec::register_type temp = vec;
-      int msb = {{intrin_tp[ctype][1]}} - 1;  // Minus 1 because of the Sign bit
-      __m128i result = _mm_set1_epi{{intrin_tp[ctype][1]}}(msb); // Indicating all bits are zero, minus the sign bit
-      
-      __m128i current_bit; // Start with the second highest bit (ignoring sign bit)
-      __m128i sign_bit;
+      int msb = {{intrin_tp[ctype][1]}};
+      __m128i result = _mm_set1_epi{{intrin_tp[ctype][1]}}(msb); // Indicating all bits are zero
       {% if ctype == "int16_t" %}
-      current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x4000); 
-      sign_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x8000);
+      __m128i current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x8000); // Also sign_bit
       {% elif ctype == "int32_t" %}
-      current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x40000000);
-      sign_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x80000000);
+      __m128i current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x80000000); // Also sign_bit
       {% else  %}
-      current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x40);
-      sign_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x80);
+      __m128i current_bit = _mm_set1_epi{{intrin_tp[ctype][1]}}(0x80); // Also sign_bit
       {% endif %}
 
       // If the input value is negative, we need to invert the bits
       __m128i is_negative = _mm_cmpgt_epi{{intrin_tp[ctype][1]}}(_mm_setzero_si128(), temp);
-      temp = _mm_xor_si128(temp, _mm_and_si128(sign_bit, is_negative));
+      temp = _mm_xor_si128(temp, is_negative);
+      temp = _mm_add_epi{{intrin_tp[ctype][1]}}(temp, _mm_and_si128(is_negative, _mm_set1_epi{{intrin_tp[ctype][1]}}(1)));
 
       for (int i = msb-1; i >= 0; --i) {
         // Test the current bit of each value (minus sign bit)
@@ -1720,23 +1696,24 @@ definitions:
      lscpu_flags: [ 'sse2', 'sse4_1']
      implementation: |
       Vec::register_type temp = vec;
-      __m128i result = _mm_set1_epi64x(63); // Set initial result to 63, indicating all bits are zero
-      __m128i current_bit = _mm_set1_epi64x(0x4000000000000000); // Start with the second highest bit (ignoring sign bit)
-      __m128i sign_bit = _mm_set1_epi64x(0x8000000000000000);
+      __m128i result = _mm_set1_epi64x(64); // Set initial result to 64, indicating all bits are zero
+      __m128i current_bit = _mm_set1_epi64x(0x8000000000000000); //Also sign_bit
 
       // If the input value is negative, we need to invert the bits
       __m128i is_negative = _mm_cmpgt_epi64(_mm_setzero_si128(), temp);
-      temp = _mm_xor_si128(temp, _mm_and_si128(sign_bit, is_negative));
+      temp = _mm_xor_si128(temp, is_negative);
+      temp = _mm_add_epi64(temp, _mm_and_si128(is_negative, _mm_set1_epi64x(1)));
 
-      for (int i = 62; i >= 0; --i) {
+
+      for (int i = 63; i >= 0; --i) {
         // Test the current bit of each int64_t
         __m128i bit_set = _mm_and_si128(temp, current_bit);
 
-        // Create a mask with the number of leading zeros (62 - i) where the current bit is set
-        __m128i leading_zeros_update = _mm_set1_epi64x(62 - i);
+        // Create a mask with the number of leading zeros (63 - i) where the current bit is set
+        __m128i leading_zeros_update = _mm_set1_epi64x(63 - i);
         __m128i index_mask = _mm_cmpeq_epi64(bit_set, current_bit);
 
-        // Update result with the masked leading zeros values only if they haven't been set before (greater than 62 - i)
+        // Update result with the masked leading zeros values only if they haven't been set before (greater than 63 - i)
         __m128i not_set_yet = _mm_cmpgt_epi64(result, leading_zeros_update);
         index_mask = _mm_and_si128(index_mask, not_set_yet);
         result = _mm_blendv_epi8(result, leading_zeros_update, index_mask);
@@ -1814,10 +1791,12 @@ definitions:
      implementation: |
       using T = Vec::base_type;
       int leading_zeroes = 0;
-      const int num_bits = std::numeric_limits<T>::digits;
+      const int num_bits = std::numeric_limits<T>::digits + std::is_signed<T>::value;
       T mask = T(1) << (num_bits - 1);
+      // If the input value is negative, find the absolute value
+      T abs = (vec < 0) ? -vec : vec;
       for(int i = 0; i < num_bits; i++){
-        if(vec & mask){
+        if(abs & mask){
           break;
         }
         leading_zeroes ++;
